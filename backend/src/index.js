@@ -18,14 +18,33 @@ const uploadDir = path.join(root, "..", "uploads");
 fs.mkdirSync(uploadDir, { recursive: true });
 const upload = multer({ dest: uploadDir, limits: { fileSize: 2 * 1024 * 1024 }, fileFilter: (_, file, cb) => cb(null, /^image\/(png|jpeg|jpg|webp)$/.test(file.mimetype)) });
 
-app.use(cors({ origin: "http://localhost:5173" }));
+const allowedOrigins = new Set([
+  "http://localhost:5173",
+  "http://localhost:5174",
+  "http://127.0.0.1:5173",
+  "http://127.0.0.1:5174"
+]);
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.has(origin)) return callback(null, true);
+    return callback(new Error("Origin is not allowed by CORS"));
+  }
+}));
 app.use(express.json());
 
 const cleanUser = (user) => ({ id: user.id, name: user.name, email: user.email, role: user.role, employeeId: user.employeeId });
-function auth(req, res, next) {
+async function auth(req, res, next) {
   const token = req.headers.authorization?.replace("Bearer ", "");
   if (!token) return res.status(401).json({ error: "Authentication required" });
-  try { req.user = jwt.verify(token, secret); next(); } catch { return res.status(401).json({ error: "Invalid or expired session" }); }
+  try {
+    const claims = jwt.verify(token, secret);
+    const user = await prisma.user.findUnique({ where: { id: claims.id } });
+    if (!user) return res.status(401).json({ error: "Session user no longer exists" });
+    req.user = { id: user.id, role: user.role, name: user.name };
+    next();
+  } catch {
+    return res.status(401).json({ error: "Invalid or expired session" });
+  }
 }
 const roles = (...allowed) => (req, res, next) => allowed.includes(req.user.role) ? next() : res.status(403).json({ error: "You do not have permission for this action" });
 const parseDate = (value) => { const date = new Date(value); return Number.isNaN(date.getTime()) ? null : date; };
@@ -38,17 +57,23 @@ app.post("/api/auth/login", async (req, res) => {
   const token = jwt.sign({ id: user.id, role: user.role, name: user.name }, secret, { expiresIn: "8h" });
   res.json({ token, user: cleanUser(user) });
 });
-app.get("/api/auth/me", auth, async (req, res) => res.json({ user: cleanUser(await prisma.user.findUniqueOrThrow({ where: { id: req.user.id } })) }));
+app.get("/api/auth/me", auth, async (req, res) => {
+  const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+  if (!user) return res.status(401).json({ error: "Session user no longer exists" });
+  res.json({ user: cleanUser(user) });
+});
 
 app.get("/api/vouchers", auth, async (req, res) => {
-  const { search, status, category, department, from, to } = req.query;
+  const { search, status, category, department, from, to, sortBy = "updatedAt", sortOrder = "desc" } = req.query;
   const where = req.user.role === "EMPLOYEE" ? { employeeId: req.user.id } : {};
   if (status) where.status = status;
   if (category) where.category = { contains: category, mode: "insensitive" };
   if (department) where.department = { contains: department, mode: "insensitive" };
   if (search) where.OR = [{ voucherNumber: { contains: search, mode: "insensitive" } }, { title: { contains: search, mode: "insensitive" } }, { employee: { name: { contains: search, mode: "insensitive" } } }];
   if (from || to) where.expenseDate = { ...(from && { gte: parseDate(from) }), ...(to && { lte: parseDate(to) }) };
-  res.json(await prisma.voucher.findMany({ where, include: voucherInclude, orderBy: { updatedAt: "desc" } }));
+  const sortFields = new Set(["updatedAt", "voucherDate", "expenseDate", "amount", "status"]);
+  const orderBy = { [sortFields.has(sortBy) ? sortBy : "updatedAt"]: sortOrder === "asc" ? "asc" : "desc" };
+  res.json(await prisma.voucher.findMany({ where, include: voucherInclude, orderBy }));
 });
 app.get("/api/vouchers/:id", auth, async (req, res) => {
   const voucher = await prisma.voucher.findUnique({ where: { id: Number(req.params.id) }, include: voucherInclude });

@@ -10,6 +10,10 @@ async function api(path, options = {}) {
   const response = await fetch(API + path, { ...options, headers });
   if (response.status === 204) return null;
   const body = await response.json().catch(() => ({}));
+  if (response.status === 401) {
+    localStorage.removeItem("token");
+    window.dispatchEvent(new Event("auth-expired"));
+  }
   if (!response.ok) throw new Error(body.error || "Request failed");
   return body;
 }
@@ -23,7 +27,7 @@ function Login({ onLogin }) {
 }
 
 function Layout({ user, onLogout, children }) {
-  return <div className="app-shell"><aside><div className="logo"><span>EV</span><strong>ExpenseFlow</strong></div><p className="role">{user.role} PORTAL</p><nav><NavLink to="/" end>Dashboard</NavLink><NavLink to="/vouchers">{user.role === "EMPLOYEE" ? "My vouchers" : "All vouchers"}</NavLink>{user.role === "EMPLOYEE" && <NavLink to="/vouchers/new">New voucher</NavLink>}</nav><button className="logout" onClick={onLogout}>Sign out</button></aside><main className="content"><header><div><p className="eyebrow">WORKSPACE</p><h2>{user.role === "EMPLOYEE" ? "My expense workspace" : `${user.role === "DIRECTOR" ? "Director" : "Accounts"} workspace`}</h2></div><div className="profile"><span>{user.name.slice(0, 1)}</span>{user.name}</div></header>{children}</main></div>;
+  return <div className="app-shell"><aside><div className="logo"><span>EV</span><strong>ExpenseFlow</strong></div><p className="role">{user.role} PORTAL</p><nav><NavLink to="/" end>Dashboard</NavLink>{user.role === "DIRECTOR" && <NavLink to="/vouchers?status=PENDING_APPROVAL">Pending approvals</NavLink>}<NavLink to="/vouchers">{user.role === "EMPLOYEE" ? "My vouchers" : "All vouchers"}</NavLink>{user.role === "EMPLOYEE" && <NavLink to="/vouchers/new">New voucher</NavLink>}</nav><button className="logout" onClick={onLogout}>Sign out</button></aside><main className="content"><header><div><p className="eyebrow">WORKSPACE</p><h2>{user.role === "EMPLOYEE" ? "My expense workspace" : `${user.role === "DIRECTOR" ? "Director" : "Accounts"} workspace`}</h2></div><div className="profile"><span>{user.name.slice(0, 1)}</span>{user.name}</div></header>{children}</main></div>;
 }
 function Protected({ user, children, roles }) { return !user ? <Navigate to="/login" /> : roles && !roles.includes(user.role) ? <Navigate to="/" /> : children; }
 
@@ -33,15 +37,20 @@ function Dashboard({ user }) {
   if (!data) return <div className="loading">Loading dashboard…</div>;
   const cards = user.role === "DIRECTOR" ? [["Pending approval", data.pending, "pending"], ["Approved today", data.approvedToday, "approved"], ["Rejected today", data.rejectedToday, "rejected"], ["Pending amount", money(data.pendingAmount), "amount"]] : user.role === "ACCOUNTS" ? [["Total vouchers", data.total], ["Pending approval", data.pending, "pending"], ["Approved vouchers", data.approved, "approved"], ["Rejected vouchers", data.rejected, "rejected"], ["Approved amount", money(data.approvedAmount), "amount"]] : [["Total vouchers", data.total], ["Drafts", data.draft, "draft"], ["Pending approval", data.pending, "pending"], ["Approved", data.approved, "approved"], ["Rejected", data.rejected, "rejected"], ["Total claimed", money(data.totalAmount), "amount"]];
   const recent = user.role === "ACCOUNTS" ? data.recentApproved : data.recent;
-  return <><div className="welcome"><div><p className="eyebrow">OVERVIEW</p><h1>Good morning, {user.name.split(" ")[0]}.</h1><p className="muted">Here is what is happening with your vouchers today.</p></div>{user.role === "EMPLOYEE" && <Link className="button" to="/vouchers/new">+ Create voucher</Link>}</div><div className="stats">{cards.map(([label, value, tone]) => <div className={`stat ${tone || ""}`} key={label}><p>{label}</p><strong>{value}</strong></div>)}</div><section className="panel"><div className="panel-heading"><h3>{user.role === "ACCOUNTS" ? "Recent approved vouchers" : "Recent activity"}</h3><Link to="/vouchers">View all</Link></div><VoucherTable vouchers={recent} /></section></>;
+  return <><div className="welcome"><div><p className="eyebrow">OVERVIEW</p><h1>Good morning, {user.name.split(" ")[0]}.</h1><p className="muted">Here is what is happening with your vouchers today.</p></div>{user.role === "EMPLOYEE" && <Link className="button" to="/vouchers/new">+ Create voucher</Link>}{user.role === "DIRECTOR" && <Link className="button" to="/vouchers?status=PENDING_APPROVAL">Review pending approvals</Link>}</div><div className="stats">{cards.map(([label, value, tone]) => <div className={`stat ${tone || ""}`} key={label}>{user.role === "DIRECTOR" && label === "Pending approval" ? <Link to="/vouchers?status=PENDING_APPROVAL"><p>{label}</p><strong>{value}</strong></Link> : <><p>{label}</p><strong>{value}</strong></>}</div>)}</div><section className="panel"><div className="panel-heading"><h3>{user.role === "ACCOUNTS" ? "Recent approved vouchers" : user.role === "DIRECTOR" ? "Recent voucher activity" : "Recent activity"}</h3><div className="panel-heading-actions"><Link to="/vouchers">View all</Link>{user.role === "DIRECTOR" && <Link to="/vouchers?status=PENDING_APPROVAL">Pending approvals</Link>}</div></div><VoucherTable vouchers={recent} /></section></>;
 }
 function VoucherTable({ vouchers }) {
   return <div className="table-wrap"><table><thead><tr><th>Voucher</th><th>Title</th><th>Employee</th><th>Date</th><th>Amount</th><th>Status</th></tr></thead><tbody>{vouchers?.length ? vouchers.map(v => <tr key={v.id}><td><Link to={`/vouchers/${v.id}`} className="strong">{v.voucherNumber}</Link></td><td>{v.title}</td><td>{v.employee?.name || "-"}</td><td>{date(v.expenseDate)}</td><td>{money(v.amount)}</td><td><span className={`badge ${v.status.toLowerCase()}`}>{v.status.replace("_", " ")}</span></td></tr>) : <tr><td colSpan="6" className="empty">No vouchers yet.</td></tr>}</tbody></table></div>;
 }
 function Vouchers({ user }) {
-  const [vouchers, setVouchers] = useState([]); const [query, setQuery] = useState(""); const [status, setStatus] = useState("");
-  useEffect(() => { api(`/vouchers?search=${encodeURIComponent(query)}&status=${status}`).then(setVouchers).catch(console.error); }, [query, status]);
-  return <><div className="page-heading"><div><p className="eyebrow">VOUCHERS</p><h1>{user.role === "EMPLOYEE" ? "My vouchers" : "All vouchers"}</h1></div>{user.role === "EMPLOYEE" && <Link className="button" to="/vouchers/new">+ New voucher</Link>}</div><div className="filters"><input placeholder="Search voucher, title or employee…" value={query} onChange={e => setQuery(e.target.value)} /><select value={status} onChange={e => setStatus(e.target.value)}><option value="">All statuses</option><option value="DRAFT">Draft</option><option value="PENDING_APPROVAL">Pending approval</option><option value="APPROVED">Approved</option><option value="REJECTED">Rejected</option></select></div><section className="panel"><VoucherTable vouchers={vouchers} /></section></>;
+  const [vouchers, setVouchers] = useState([]); const [query, setQuery] = useState(""); const [status, setStatus] = useState(() => new URLSearchParams(location.search).get("status") || ""); const [category, setCategory] = useState(""); const [department, setDepartment] = useState(""); const [from, setFrom] = useState(""); const [to, setTo] = useState("");
+  useEffect(() => { const params = new URLSearchParams({ search: query, status, category, department, from, to }); api(`/vouchers?${params}`).then(setVouchers).catch(console.error); }, [query, status, category, department, from, to]);
+  return <><div className="page-heading"><div><p className="eyebrow">{user.role === "DIRECTOR" && status === "PENDING_APPROVAL" ? "DIRECTOR" : "VOUCHERS"}</p><h1>{user.role === "DIRECTOR" && status === "PENDING_APPROVAL" ? "Pending approvals" : user.role === "EMPLOYEE" ? "My vouchers" : "All vouchers"}</h1></div>{user.role === "EMPLOYEE" && <Link className="button" to="/vouchers/new">+ New voucher</Link>}{user.role === "ACCOUNTS" && <button className="button" onClick={() => window.print()}>Print vouchers</button>}</div><div className="filters"><input placeholder="Search voucher, title or employee…" value={query} onChange={e => setQuery(e.target.value)} /><select value={status} onChange={e => setStatus(e.target.value)}><option value="">All statuses</option><option value="DRAFT">Draft</option><option value="PENDING_APPROVAL">Pending approval</option><option value="APPROVED">Approved</option><option value="REJECTED">Rejected</option></select><input placeholder="Category" value={category} onChange={e => setCategory(e.target.value)} /><input placeholder="Department" value={department} onChange={e => setDepartment(e.target.value)} /><label>From <input type="date" value={from} onChange={e => setFrom(e.target.value)} /></label><label>To <input type="date" value={to} onChange={e => setTo(e.target.value)} /></label></div><section className="panel"><VoucherTable vouchers={vouchers} /></section></>;
+}
+function SignatureImage({ url, label }) {
+  const [src, setSrc] = useState("");
+  useEffect(() => { let objectUrl; if (url) fetch(`${API}${url.replace("/api", "")}`, { headers: { Authorization: `Bearer ${getToken()}` } }).then(response => { if (!response.ok) throw new Error("Signature could not be loaded"); return response.blob(); }).then(blob => { objectUrl = URL.createObjectURL(blob); setSrc(objectUrl); }).catch(() => setSrc("")); return () => objectUrl && URL.revokeObjectURL(objectUrl); }, [url]);
+  return url && src ? <p className="signature"><span>{label}</span><img src={src} alt={label} /></p> : null;
 }
 function VoucherForm() {
   const navigate = useNavigate(); const { id } = useParams(); const [error, setError] = useState(""); const [signatureFile, setSignatureFile] = useState(null); const [form, setForm] = useState({ department: "", title: "", category: "Travel", description: "", amount: "", expenseDate: new Date().toISOString().slice(0, 10), employeeSignature: "" });
@@ -55,13 +64,70 @@ function VoucherDetail({ user }) {
   useEffect(() => { api(`/vouchers/${id}`).then(setV).catch(e => setError(e.message)); }, [id]);
   if (error) return <div className="error">{error}</div>; if (!v) return <div className="loading">Loading voucher…</div>;
   async function submit() { try { setV(await api(`/vouchers/${id}/submit`, { method: "POST" })); } catch (e) { setError(e.message); } }
+  async function remove() { if (!window.confirm("Delete this draft voucher?")) return; try { await api(`/vouchers/${id}`, { method: "DELETE" }); navigate("/vouchers"); } catch (e) { setError(e.message); } }
   async function approve() { const body = new FormData(); body.append("signature", file); try { setV(await api(`/vouchers/${id}/approve`, { method: "POST", body })); } catch (e) { setError(e.message); } }
   async function reject() { try { setV(await api(`/vouchers/${id}/reject`, { method: "POST", body: JSON.stringify({ reason }) })); } catch (e) { setError(e.message); } }
-  return <><div className="page-heading"><div><p className="eyebrow">VOUCHER DETAIL</p><h1>{v.voucherNumber}</h1></div><span className={`badge large ${v.status.toLowerCase()}`}>{v.status.replace("_", " ")}</span></div><div className="detail-grid"><section className="panel"><h3>Expense information</h3><div className="details"><div><span>Expense title</span><strong>{v.title}</strong></div><div><span>Amount</span><strong>{money(v.amount)}</strong></div><div><span>Department</span><strong>{v.department}</strong></div><div><span>Category</span><strong>{v.category}</strong></div><div><span>Expense date</span><strong>{date(v.expenseDate)}</strong></div><div><span>Created</span><strong>{date(v.createdAt)}</strong></div></div><hr /><span className="label">Description</span><p>{v.description || "No description provided."}</p></section><section className="panel"><h3>Workflow</h3><div className="timeline"><div className="timeline-item done"><b>Draft created</b><span>{date(v.createdAt)}</span></div><div className={`timeline-item ${v.status !== "DRAFT" ? "done" : ""}`}><b>Submitted for approval</b><span>{v.status !== "DRAFT" ? "Complete" : "Waiting"}</span></div><div className={`timeline-item ${v.status === "APPROVED" || v.status === "REJECTED" ? "done" : ""}`}><b>{v.status === "REJECTED" ? "Rejected" : "Approval decision"}</b><span>{v.rejectionReason || (v.approvalDate ? date(v.approvalDate) : "Pending")}</span></div></div>{v.employeeSignature && <p className="signature">Employee signature: <strong>{v.employeeSignature}</strong></p>}{v.rejectionReason && <div className="notice">Rejection reason: {v.rejectionReason}</div>}{user.role === "EMPLOYEE" && v.status === "DRAFT" && <div className="actions"><Link className="button secondary" to={`/vouchers/${v.id}/edit`}>Edit draft</Link><button onClick={submit}>Submit for approval</button></div>}{user.role === "DIRECTOR" && v.status === "PENDING_APPROVAL" && <div className="director-actions"><label>Director signature<input type="file" accept="image/*" onChange={e => setFile(e.target.files[0])} /></label><button onClick={approve} disabled={!file}>Approve voucher</button><label>Rejection reason<textarea value={reason} onChange={e => setReason(e.target.value)} rows="2" /></label><button className="danger" onClick={reject}>Reject voucher</button></div>}</section></div>{error && <div className="error">{error}</div>}<button className="back" onClick={() => navigate(-1)}>← Back</button></>;
+  return <>
+    <div className="page-heading"><div><p className="eyebrow">VOUCHER DETAIL</p><h1>{v.voucherNumber}</h1></div><span className={`badge large ${v.status.toLowerCase()}`}>{v.status.replace("_", " ")}</span></div>
+    <div className="detail-grid">
+      <section className="panel">
+        <h3>Basic information</h3>
+        <div className="details">
+          <div><span>Voucher number</span><strong>{v.voucherNumber}</strong></div>
+          <div><span>Voucher date</span><strong>{date(v.voucherDate)}</strong></div>
+          <div><span>Expense date</span><strong>{date(v.expenseDate)}</strong></div>
+          <div><span>Department</span><strong>{v.department}</strong></div>
+          <div><span>Expense title</span><strong>{v.title}</strong></div>
+          <div><span>Expense category</span><strong>{v.category}</strong></div>
+          <div><span>Amount</span><strong>{money(v.amount)}</strong></div>
+        </div>
+        <hr /><span className="label">Expense description</span><p>{v.description || "No description provided."}</p>
+      </section>
+      <section className="panel">
+        <h3>Employee information</h3>
+        <div className="details">
+          <div><span>Employee name</span><strong>{v.employee?.name || "-"}</strong></div>
+          <div><span>Employee ID</span><strong>{v.employee?.employeeId || "Not provided"}</strong></div>
+        </div>
+        <SignatureImage url={v.employeeSignature} label="Employee signature" />
+        <hr /><h3>Approval information</h3>
+        <div className="details">
+          <div><span>Current status</span><strong>{v.status.replace("_", " ")}</strong></div>
+          <div><span>Approval date</span><strong>{v.approvalDate ? date(v.approvalDate) : "Not approved"}</strong></div>
+          <div><span>Approved by</span><strong>{v.approvedBy?.name || "Not approved"}</strong></div>
+        </div>
+        <SignatureImage url={v.directorSignature} label="Director signature" />
+        {v.rejectionReason && <div className="notice">Rejection reason: {v.rejectionReason}</div>}
+      </section>
+      <section className="panel">
+        <h3>Audit information</h3>
+        <div className="details">
+          <div><span>Created date</span><strong>{date(v.createdAt)}</strong></div>
+          <div><span>Last updated</span><strong>{date(v.updatedAt)}</strong></div>
+        </div>
+        <div className="timeline">
+          <div className="timeline-item done"><b>Draft created</b><span>{date(v.createdAt)}</span></div>
+          <div className={`timeline-item ${v.status !== "DRAFT" ? "done" : ""}`}><b>Submitted for approval</b><span>{v.status !== "DRAFT" ? "Complete" : "Waiting"}</span></div>
+          <div className={`timeline-item ${v.status === "APPROVED" || v.status === "REJECTED" ? "done" : ""}`}><b>{v.status === "REJECTED" ? "Rejected" : "Approval decision"}</b><span>{v.rejectionReason || (v.approvalDate ? date(v.approvalDate) : "Pending")}</span></div>
+        </div>
+        {user.role === "EMPLOYEE" && v.status === "DRAFT" && <div className="actions"><Link className="button secondary" to={`/vouchers/${v.id}/edit`}>Edit draft</Link><button onClick={submit}>Submit for approval</button><button className="danger" onClick={remove}>Delete draft</button></div>}
+        {user.role === "DIRECTOR" && v.status === "PENDING_APPROVAL" && <div className="director-actions"><label>Director signature<input type="file" accept="image/png,image/jpeg,image/webp" onChange={e => setFile(e.target.files[0])} /><small className="hint">Select a PNG, JPG, JPEG, or WebP image to enable approval.</small></label><button onClick={approve} disabled={!file}>Approve voucher</button><label>Rejection reason<textarea value={reason} onChange={e => setReason(e.target.value)} rows="2" placeholder="Enter the reason for rejection" /></label><button className="danger" onClick={reject}>Reject voucher</button></div>}
+      </section>
+    </div>
+    {error && <div className="error">{error}</div>}<button className="back" onClick={() => navigate(-1)}>← Back</button>
+  </>;
 }
 function App() {
-  const [user, setUser] = useState(null); useEffect(() => { if (getToken()) api("/auth/me").then(r => setUser(r.user)).catch(() => localStorage.removeItem("token")); }, []);
-  if (!user) return location.pathname !== "/login" && getToken() ? <div className="loading">Loading…</div> : <Routes><Route path="/login" element={<Login onLogin={setUser} />} /><Route path="*" element={<Navigate to="/login" />} /></Routes>;
+  const [user, setUser] = useState(null); const [sessionLoading, setSessionLoading] = useState(Boolean(getToken()));
+  useEffect(() => {
+    const expire = () => { setUser(null); setSessionLoading(false); };
+    window.addEventListener("auth-expired", expire);
+    if (getToken()) api("/auth/me").then(r => setUser(r.user)).catch(() => setUser(null)).finally(() => setSessionLoading(false));
+    else setSessionLoading(false);
+    return () => window.removeEventListener("auth-expired", expire);
+  }, []);
+  if (sessionLoading) return <div className="loading">Restoring your session…</div>;
+  if (!user) return <Routes><Route path="/login" element={<Login onLogin={setUser} />} /><Route path="*" element={<Navigate to="/login" />} /></Routes>;
   const logout = () => { localStorage.removeItem("token"); setUser(null); };
   return <Layout user={user} onLogout={logout}><Routes><Route path="/" element={<Dashboard user={user} />} /><Route path="/vouchers" element={<Vouchers user={user} />} /><Route path="/vouchers/new" element={<Protected user={user} roles={["EMPLOYEE"]}><VoucherForm /></Protected>} /><Route path="/vouchers/:id/edit" element={<Protected user={user} roles={["EMPLOYEE"]}><VoucherForm /></Protected>} /><Route path="/vouchers/:id" element={<VoucherDetail user={user} />} /><Route path="*" element={<Navigate to="/" />} /></Routes></Layout>;
 }

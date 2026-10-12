@@ -152,6 +152,9 @@ label { color: #48574e; display: grid; font-size: 12px; font-weight: 700; gap: 7
 .notice, .error { background: #fff4dd; border-radius: 7px; color: #885f1b; font-size: 12px; margin-top: 15px; padding: 12px; }
 .error { background: #fde9e7; color: #9e403d; }
 .signature { color: #65746b; font-size: 12px; }
+.hint { color: #65746b; display: block; font-size: 11px; margin-top: 6px; }
+.signature span { display: block; margin-bottom: 7px; }
+.signature img { background: white; border: 1px solid #dbe3dd; border-radius: 5px; display: block; max-height: 90px; max-width: 220px; padding: 5px; }
 .director-actions { display: grid; gap: 12px; margin-top: 24px; }
 .back { background: transparent; color: var(--green); padding-left: 0; }
 .back:hover { background: transparent; box-shadow: none; color: #0d3b29; transform: none; }
